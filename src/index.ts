@@ -4,8 +4,15 @@ import {
 } from '@jupyterlab/application';
 
 //import { requestAPI } from './jupyterlab-mms';
-import { INotebookTracker } from '@jupyterlab/notebook';
+import { INotebookModel, NotebookPanel } from '@jupyterlab/notebook';
 import { UUID } from '@lumino/coreutils';
+import { DocumentRegistry } from '@jupyterlab/docregistry';
+import { IDisposable } from '@lumino/disposable';
+import { Widget } from '@lumino/widgets';
+import { IChangedArgs } from '@jupyterlab/coreutils';
+import { ICellModel } from '@jupyterlab/cells';
+import { IObservableUndoableList } from '@jupyterlab/observables';
+import { IObservableList } from '@jupyterlab/observables/lib/observablelist';
 
 /**
  * Initialization data for the jupyterlab-mms extension.
@@ -13,37 +20,12 @@ import { UUID } from '@lumino/coreutils';
 const extension: JupyterFrontEndPlugin<void> = {
   id: 'jupyterlab-mms',
   autoStart: true,
-  requires: [INotebookTracker],
-  activate: (app: JupyterFrontEnd, notebookTracker: INotebookTracker) => {
+  activate: (app: JupyterFrontEnd) => {
     console.log('JupyterLab extension jupyterlab-mms is activated!');
-    notebookTracker.widgetAdded.connect((sender, panel) => {
-      console.log('widgetAdded'); //notebook metadata is not initialized yet - has no mms key
-      panel.content.modelChanged.connect((notebook, none) => {
-        console.log('content model changed'); //never fires??
-      });
-      panel.content.modelContentChanged.connect((notebook, none) => {
-        console.log('content modelContent changed'); //on close notebook.model becomes null
-      });
-      panel.model.contentChanged.connect((notebookModel, none) => {
-        console.log('model content changed'); //on close notebookModel.cells becomes null, seems fires exactly the same as above
-      });
-      panel.model.stateChanged.connect((notebookModel, changed) => {
-        console.log('model state changed'); //when notebook is fully opened - changed is {name: 'dirty', newValue: false, oldValue: true} - vice versa
-      });
-      //if (panel.content.model.metadata.has('mms')) {
-        console.log('found mms notebook');
-        panel.content.model.cells.changed.connect((cells, changed) => {
-          console.log('cells changed');
-          for (const cell of changed.newValues.values()) {
-            if (!cell.metadata.has('mms')) {
-              const uid = UUID.uuid4();
-              console.log('adding mms cell id ' + uid);
-              cell.metadata.set('mms', { id: uid });
-            }
-          }
-        });
-      //}
-    });
+    app.docRegistry.addWidgetExtension(
+      'Notebook',
+      new MmsNotebookWidgetExtension()
+    );
 
     /*
     requestAPI<any>('get_example')
@@ -59,4 +41,60 @@ const extension: JupyterFrontEndPlugin<void> = {
   }
 };
 
+class MmsNotebookWidgetExtension
+  implements DocumentRegistry.IWidgetExtension<NotebookPanel, INotebookModel> {
+  createNew(
+    panel: NotebookPanel,
+    context: DocumentRegistry.IContext<INotebookModel>
+  ): IDisposable {
+    return new MmsNotebookWidget(panel, context);
+  }
+}
+
+class MmsNotebookWidget extends Widget {
+  _panel: NotebookPanel;
+  _context: DocumentRegistry.IContext<INotebookModel>;
+
+  constructor(
+    panel: NotebookPanel,
+    context: DocumentRegistry.IContext<INotebookModel>
+  ) {
+    super();
+    this._panel = panel;
+    this._context = context;
+
+    panel.model.stateChanged.connect(this._init, this);
+  }
+
+  private _init(
+    model: INotebookModel,
+    change: IChangedArgs<any, any, string>
+  ): void {
+    // Notebook is no longer in dirty state (i.e., it has loaded)
+    if ('dirty' === change.name && false === change.newValue) {
+      // disconnect from state change signal
+      model.stateChanged.disconnect(this._init, this);
+      if (model.metadata.has('mms')) {
+        console.log('mms notebook opened');
+        model.cells.changed.connect(this._cellListChanged, this);
+      }
+    }
+  }
+
+  private _cellListChanged(
+    cells: IObservableUndoableList<ICellModel>,
+    changed: IObservableList.IChangedArgs<ICellModel>
+  ): void {
+    console.log('cells changed');
+    if ('add' === changed.type) {
+      for (const cell of changed.newValues.values()) {
+        if (!cell.metadata.has('mms')) {
+          const uid = UUID.uuid4();
+          console.log('adding mms cell id ' + uid);
+          cell.metadata.set('mms', { id: uid });
+        }
+      }
+    }
+  }
+}
 export default extension;
