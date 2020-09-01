@@ -138,6 +138,9 @@ class MmsNotebookWidget extends Widget {
         const iter = model.cells.iter();
         let cell = iter.next();
         while (cell) {
+          if (!cell.metadata.has('mms')) {
+            cell.metadata.set('mms', { id: UUID.uuid4() });
+          }
           const mmsCellId = (cell.metadata.get('mms') as PartialJSONObject)
             .id as string;
           this._cellsMap.set(mmsCellId, cell);
